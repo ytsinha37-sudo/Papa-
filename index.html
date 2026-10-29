@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b1224">
+<title>EUR/USD Candle Bot</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1224;--panel:#141e34;--line:#273653;--muted:#9aa9c3;--text:#edf3ff;--blue:#5688f5;--green:#22c99a;--red:#ff6480}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(150deg,#0b1224,#101a31);color:var(--text);font:15px system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:1000px;margin:auto;padding:18px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}.brand{font-size:23px;font-weight:800}.sub{color:var(--muted);font-size:13px}.pill{border:1px solid var(--line);border-radius:99px;padding:7px 11px;color:var(--muted);font-size:12px}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.card,.section{background:rgba(20,30,52,.92);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:14px;min-width:0}.label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}.value{font-size:25px;font-weight:750;margin:7px 0}.muted{color:var(--muted)}.controls{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:12px}button,select{border:1px solid var(--line);border-radius:11px;padding:11px 13px;font:inherit;color:var(--text);background:#0d172b}button{background:var(--blue);border:0;font-weight:700;cursor:pointer}button.secondary{background:#243451}button:disabled{opacity:.55}select{max-width:100%}.status{margin-top:12px;padding:12px;border-radius:12px;background:#0c1528;color:#ffb2c0;overflow-wrap:anywhere;font-size:13px}.status.good{color:#8cebd0}.chartWrap{height:300px;position:relative;border-radius:12px;overflow:hidden;background:#0b1427;border:1px solid #202e49}canvas{width:100%;height:100%;display:block}.legend{display:flex;gap:15px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin-top:10px}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}.tablewrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:13px;white-space:nowrap}th,td{text-align:right;padding:10px 8px;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}th{color:var(--muted);font-weight:600}.up{color:var(--green)}.down{color:var(--red)}.foot{font-size:12px;color:var(--muted);line-height:1.6;margin:18px 2px}
+@media(min-width:700px){.stats{grid-template-columns:repeat(4,minmax(0,1fr))}.chartWrap{height:390px}.value{font-size:27px}}
+</style>
+</head>
+<body><main>
+<header class="top"><div><div class="brand">📊 EUR/USD Candle Bot</div><div class="sub">Alpha Vantage · FX Intraday · API data only</div></div><div class="pill" id="badge">NOT CONNECTED</div></header>
+<section class="stats">
+ <div class="card"><div class="label">Latest close</div><div class="value" id="latest">—</div><div class="sub" id="lastTime">সময়: —</div></div>
+ <div class="card"><div class="label">Trend</div><div class="value" id="trend">—</div><div class="sub" id="trendDetail">ডেটা অপেক্ষমাণ</div></div>
+ <div class="card"><div class="label">Candles loaded</div><div class="value" id="count">0</div><div class="sub">API response থেকে</div></div>
+ <div class="card"><div class="label">Last refresh</div><div class="value" id="refresh" style="font-size:17px">—</div><div class="sub">Auto refresh ঐচ্ছিক</div></div>
+</section>
+<section class="section"><b>Connection & settings</b><div class="controls">
+<select id="interval" aria-label="Candle interval"><option value="1min">১ মিনিট</option><option value="5min">৫ মিনিট</option><option value="15min">১৫ মিনিট</option><option value="30min">৩০ মিনিট</option><option value="60min">৬০ মিনিট</option></select>
+<button id="fetchBtn">Fetch now</button><button class="secondary" id="autoBtn">Auto: OFF</button>
+</div><div class="status" id="status" role="status">প্রথমে Fetch now চাপো। এই সাইট Vercel-এ deploy করার পর ব্যবহার করবে।</div></section>
+<section class="section"><b>ক্যান্ডেল চার্ট</b><div class="sub" style="margin:5px 0 12px">OHLC data visualization · Trading signal নয়</div><div class="chartWrap"><canvas id="chart"></canvas></div><div class="legend"><span><i class="dot" style="background:#22c99a"></i>Bullish</span><span><i class="dot" style="background:#ff6480"></i>Bearish</span><span id="chartNote">ডেটা নেই</span></div></section>
+<section class="section"><b>OHLC ডেটা / History</b><div class="tablewrap"><table><thead><tr><th>সময়</th><th>Open</th><th>High</th><th>Low</th><th>Close</th></tr></thead><tbody id="history"><tr><td colspan="5" style="text-align:center;color:#9aa9c3">এখনো ডেটা লোড হয়নি</td></tr></tbody></table></div></section>
+<p class="foot">নোট: Alpha Vantage-এর Forex feed Quotex-এর feed নয়; দাম ও candle timing আলাদা হতে পারে। FX_INTRADAY তোমার API plan-এ উপলভ্য না থাকলে API plan error দেখাবে। এটি আর্থিক পরামর্শ বা নিশ্চিত ভবিষ্যদ্বাণী নয়।</p>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let autoTimer = null, candles = [];
+function fmt(n){return Number(n).toFixed(5)}
+function setStatus(msg,good=false){$("status").textContent=msg;$("status").classList.toggle("good",good)}
+async function loadCandles(){
+ const btn=$("fetchBtn");btn.disabled=true;setStatus("API থেকে ডেটা আনা হচ্ছে…");
+ try{
+  const r=await fetch("/api/candles?interval="+encodeURIComponent($("interval").value),{headers:{Accept:"application/json"}});
+  let data;try{data=await r.json()}catch{throw new Error("Backend JSON দেয়নি। Vercel deployment ও /api/candles route পরীক্ষা করো.")}
+  if(!r.ok||!data.ok)throw new Error(data.error||("HTTP "+r.status)+(data.hint?" — "+data.hint:""));
+  if(!Array.isArray(data.candles)||!data.candles.length)throw new Error("API response-এ candle array নেই।");
+  candles=data.candles;render();$("badge").textContent="CONNECTED";$("count").textContent=candles.length;
+  $("latest").textContent=fmt(candles[candles.length-1].close);$("lastTime").textContent="সময়: "+candles[candles.length-1].time;
+  $("refresh").textContent=new Date().toLocaleTimeString();setStatus("ডেটা সফলভাবে এসেছে · "+data.source+" · "+data.interval,true);
+ }catch(e){$("badge").textContent="CONNECTION ERROR";setStatus(e.message+" | Vercel logs এবং ALPHA_VANTAGE_API_KEY environment variable পরীক্ষা করো.");}
+ finally{btn.disabled=false}
+}
+function render(){
+ const last=candles[candles.length-1], first=candles[0];
+ const delta=last.close-first.open;
+ $("trend").textContent=delta>0?"Bullish":delta<0?"Bearish":"Sideways";
+ $("trend").className="value "+(delta>0?"up":delta<0?"down":"");
+ $("trendDetail").textContent="প্রথম Open থেকে শেষ Close-এর পরিবর্তন: "+(delta>0?"+":"")+delta.toFixed(5);
+ $("chartNote").textContent=candles.length+"টি candle";
+ const body=$("history");body.innerHTML="";
+ candles.slice().reverse().forEach(c=>{
+  const tr=document.createElement("tr"), cls=c.close>=c.open?"up":"down";
+  [c.time,fmt(c.open),fmt(c.high),fmt(c.low),fmt(c.close)].forEach((v,i)=>{const td=document.createElement("td");td.textContent=v;if(i===4)td.className=cls;tr.appendChild(td)});
+  body.appendChild(tr);
+ });
+ drawChart();
+}
+function drawChart(){
+ const canvas=$("chart"), rect=canvas.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+ canvas.width=Math.max(1,Math.floor(rect.width*dpr));canvas.height=Math.max(1,Math.floor(rect.height*dpr));
+ const ctx=canvas.getContext("2d");ctx.scale(dpr,dpr);const w=rect.width,h=rect.height;ctx.clearRect(0,0,w,h);
+ if(!candles.length){ctx.fillStyle="#9aa9c3";ctx.textAlign="center";ctx.fillText("API data পেলে চার্ট দেখা যাবে",w/2,h/2);return}
+ const shown=candles.slice(-50), lo=Math.min(...shown.map(c=>c.low)), hi=Math.max(...shown.map(c=>c.high)), range=hi-lo||0.0001;
+ const pad={l:8,r:8,t:15,b:15}, cw=w-pad.l-pad.r,ch=h-pad.t-pad.b;
+ ctx.strokeStyle="#24324b";ctx.lineWidth=1;
+ for(let i=0;i<5;i++){let y=pad.t+ch*i/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(w-pad.r,y);ctx.stroke()}
+ const slot=cw/shown.length, bodyW=Math.max(2,slot*.58);
+ shown.forEach((c,i)=>{const x=pad.l+slot*(i+.5), y=v=>pad.t+(hi-v)/range*ch, color=c.close>=c.open?"#22c99a":"#ff6480";
+ ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(x,y(c.high));ctx.lineTo(x,y(c.low));ctx.stroke();
+ const top=y(Math.max(c.open,c.close)), bottom=y(Math.min(c.open,c.close));ctx.fillRect(x-bodyW/2,top,bodyW,Math.max(1,bottom-top));
+ });
+}
+$("fetchBtn").addEventListener("click",loadCandles);
+$("interval").addEventListener("change",()=>{if(candles.length)loadCandles()});
+$("autoBtn").addEventListener("click",()=>{if(autoTimer){clearInterval(autoTimer);autoTimer=null;$("autoBtn").textContent="Auto: OFF"}else{autoTimer=setInterval(loadCandles,60000);$("autoBtn").textContent="Auto: ON";loadCandles()}});
+window.addEventListener("resize",()=>{if(candles.length)drawChart()});
+drawChart();
+</script></body></html>

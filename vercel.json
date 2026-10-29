@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/candles.js": {
+      "maxDuration": 10
+    }
+  }
+}
