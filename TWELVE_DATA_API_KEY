@@ -1,0 +1,122 @@
+
+export default async function handler(req, res) {
+  if (req.method !== "GET") {
+    res.setHeader("Allow", "GET");
+    return res.status(405).json({
+      ok: false,
+      error: "Only GET requests are allowed"
+    });
+  }
+
+  const apiKey = process.env.TWELVE_DATA_API_KEY;
+
+  if (!apiKey) {
+    return res.status(500).json({
+      ok: false,
+      error: "Missing TWELVE_DATA_API_KEY in Vercel"
+    });
+  }
+
+  const allowedIntervals = [
+    "1min",
+    "5min",
+    "15min",
+    "30min",
+    "45min",
+    "1h",
+    "2h",
+    "4h",
+    "1day"
+  ];
+
+  const interval = String(req.query.interval || "1min");
+  const count = Number(req.query.count || 100);
+
+  if (!allowedIntervals.includes(interval)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Unsupported interval",
+      allowedIntervals
+    });
+  }
+
+  if (!Number.isInteger(count) || count < 1 || count > 500) {
+    return res.status(400).json({
+      ok: false,
+      error: "count must be an integer from 1 to 500"
+    });
+  }
+
+  const url = new URL("https://api.twelvedata.com/time_series");
+  url.searchParams.set("symbol", "EUR/USD");
+  url.searchParams.set("interval", interval);
+  url.searchParams.set("outputsize", String(count));
+  url.searchParams.set("apikey", apiKey);
+  url.searchParams.set("format", "JSON");
+
+  try {
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(12000)
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || data.status === "error" || data.code) {
+      const providerMessage =
+        data.message || data.error || "Provider request failed";
+
+      const status =
+        response.status === 429 || data.code === 429
+          ? 429
+          : 502;
+
+      return res.status(status).json({
+        ok: false,
+        error: providerMessage,
+        provider: "Twelve Data"
+      });
+    }
+
+    if (!Array.isArray(data.values)) {
+      return res.status(502).json({
+        ok: false,
+        error: "Unexpected response format",
+        responseKeys: Object.keys(data)
+      });
+    }
+
+    const candles = data.values
+      .map(item => ({
+        time: item.datetime,
+        open: Number(item.open),
+        high: Number(item.high),
+        low: Number(item.low),
+        close: Number(item.close)
+      }))
+      .filter(c =>
+        c.time &&
+        [c.open, c.high, c.low, c.close].every(
+          Number.isFinite
+        )
+      )
+      .sort(
+        (a, b) => new Date(a.time) - new Date(b.time)
+      );
+
+    return res.status(200).json({
+      ok: true,
+      source: "Twelve Data",
+      symbol: "EUR/USD",
+      interval,
+      count: candles.length,
+      fetchedAt: new Date().toISOString(),
+      meta: data.meta || {},
+      candles
+    });
+  } catch (error) {
+    return res.status(502).json({
+      ok: false,
+      error: "Could not connect to Twelve Data. Try again."
+    });
+  }
+}
